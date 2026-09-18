@@ -1,0 +1,6 @@
+{
+  "comments": { "lineComment": "#" },
+  "brackets": [["(", ")"], ["[", "]"], ["{", "}"]],
+  "autoClosingPairs": [{ "open": "(", "close": ")" }, { "open": "[", "close": "]" }, { "open": "{", "close": "}" }, { "open": "\"", "close": "\"" }],
+  "indentationRules": { "increaseIndentPattern": ":\\s*$", "decreaseIndentPattern": "^\\s*(інакше|помилка|нарешті)" }
+}

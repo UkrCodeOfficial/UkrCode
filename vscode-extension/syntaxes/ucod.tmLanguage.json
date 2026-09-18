@@ -1,0 +1,14 @@
+{
+  "scopeName": "source.ucod",
+  "name": "UkrCode",
+  "patterns": [{ "include": "#comments" }, { "include": "#strings" }, { "include": "#keywords" }, { "include": "#constants" }, { "include": "#numbers" }, { "include": "#functions" }, { "include": "#operators" }],
+  "repository": {
+    "comments": { "patterns": [{ "match": "#.*$", "name": "comment.line.number-sign.ucod" }] },
+    "strings": { "patterns": [{ "begin": "\"", "end": "\"", "name": "string.quoted.double.ucod" }, { "begin": "'", "end": "'", "name": "string.quoted.single.ucod" }] },
+    "keywords": { "patterns": [{ "match": "\\b(якщо|інакше|для|у|поки|повторити|разів|функція|повернути|клас|імпортувати|як|асинхронна|чекати|спробувати|помилка|нарешті|підняти|перервати|продовжити|коли|слухати)\\b", "name": "keyword.control.ucod" }] },
+    "constants": { "patterns": [{ "match": "\\b(так|ні|нічого)\\b", "name": "constant.language.ucod" }, { "match": "\\b(текст|число|дробове|логічне|список|словник|набір|кортеж|функція|об'єкт)\\b", "name": "storage.type.ucod" }] },
+    "numbers": { "patterns": [{ "match": "\\b\\d+(\\.\\d+)?\\b", "name": "constant.numeric.ucod" }] },
+    "functions": { "patterns": [{ "match": "\\b[[:alpha:]_][[:alnum:]_]*(?=\\s*\\()", "name": "entity.name.function.ucod" }, { "match": "(?<=\\.)[[:alpha:]_][[:alnum:]_]*", "name": "variable.other.property.ucod" }] },
+    "operators": { "patterns": [{ "match": "(==|!=|>=|<=|\\+=|-=|\\*=|/=|//|\\*\\*|[+*/%<>=-])", "name": "keyword.operator.ucod" }] }
+  }
+}

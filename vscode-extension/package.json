@@ -1,0 +1,24 @@
+{
+  "name": "ukrcode-language-support",
+  "displayName": "UkrCode Language Support",
+  "description": "Syntax highlighting, snippets and local commands for UkrCode .ucod files.",
+  "version": "0.1.0",
+  "publisher": "ukrcode",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Snippets"],
+  "repository": { "type": "git", "url": "https://github.com/UkrCodeOfficial/UkrCode" },
+  "main": "src/extension.js",
+  "contributes": {
+    "languages": [{ "id": "ukrcode", "aliases": ["UkrCode", "ucod"], "extensions": [".ucod"], "configuration": "language-configuration.json" }],
+    "grammars": [{ "language": "ukrcode", "scopeName": "source.ucod", "path": "syntaxes/ucod.tmLanguage.json" }],
+    "snippets": [{ "language": "ukrcode", "path": "snippets/ucod.json" }],
+    "commands": [
+      { "command": "ukrcode.runFile", "title": "UkrCode: Run File" },
+      { "command": "ukrcode.checkFile", "title": "UkrCode: Check File" },
+      { "command": "ukrcode.formatFile", "title": "UkrCode: Format File" }
+    ]
+  },
+  "scripts": { "package": "npx @vscode/vsce package" },
+  "devDependencies": { "@vscode/vsce": "^2.24.0" }
+}
