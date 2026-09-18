@@ -30,8 +30,18 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
 fi
 
 if command -v npm >/dev/null 2>&1 && command -v code >/dev/null 2>&1; then
-    (cd "$INSTALL_DIR/vscode-extension" && npm install && npm run package)
-    code --install-extension "$INSTALL_DIR/vscode-extension/ukrcode-language-support-0.1.0.vsix" --force
+    (cd "$INSTALL_DIR/vscode-extension" && npm install --no-fund --no-audit)
+    (cd "$INSTALL_DIR/vscode-extension" && npm run package)
+
+    shopt -s nullglob
+    extension_files=("$INSTALL_DIR"/vscode-extension/*.vsix)
+    shopt -u nullglob
+
+    if [[ ${#extension_files[@]} -gt 0 ]]; then
+        code --install-extension "${extension_files[0]}" --force
+    else
+        echo "Попередження: VSIX не знайдено у $INSTALL_DIR/vscode-extension" >&2
+    fi
 fi
 
 echo "UkrCode встановлено у $INSTALL_DIR"

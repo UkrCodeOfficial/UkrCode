@@ -111,6 +111,14 @@ class Parser:
 
     def statement(self):
         word = self.current.value
+        if word == "експорт":
+            self.advance()
+            inner = self.statement()
+            if inner.kind in {"function", "class"}:
+                return Statement("export", (inner, inner.data[0]))
+            if inner.kind == "assign":
+                return Statement("export", (inner, inner.data[0]))
+            raise UkrCodeError("експорт підтримує лише функції, класи та змінні", self.current.line, self.current.column)
         if word in {"якщо", "поки", "для", "повторити", "функція", "асинхронна", "спробувати", "коли", "клас"}:
             return self.compound()
         if word == "імпортувати":

@@ -47,7 +47,7 @@ extension. Файл `~/.ukrcode/.env` створюється з `.env.example`; 
 cd vscode-extension
 npm install
 npm run package
-code --install-extension ukrcode-language-support-0.1.0.vsix
+code --install-extension ukrcode-language-support-0.2.0.vsix
 ```
 
 Після цього відкрийте `.ucod` файл у VS Code. Розширення додає підсвічування,

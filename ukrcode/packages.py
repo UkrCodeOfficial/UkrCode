@@ -27,6 +27,25 @@ class PackageManager:
         )
         return root
 
+    def create_library(self, name):
+        path = self.root / name
+        if path.exists():
+            raise FileExistsError(path)
+        path.mkdir(parents=True, exist_ok=False)
+        (path / "main.ucod").write_text(
+            f"# Бібліотека {name}\n\nекспорт функція сума(а, б):\n    повернути а + б\n\nекспорт функція привітати(імʼя):\n    повернути \"Привіт, \" + імʼя\n",
+            encoding="utf-8",
+        )
+        (path / "ucod.toml").write_text(
+            f'назва = "{name}"\nверсія = "0.1.0"\nточка_входу = "main.ucod"\n',
+            encoding="utf-8",
+        )
+        (path / "README.md").write_text(
+            f"# {name}\n\nКористувацька бібліотека UkrCode.\n\nІмпорт:\n\n```ucod\nімпортувати {name}\nрезультат = {name}.сума(2, 3)\n```\n",
+            encoding="utf-8",
+        )
+        return path
+
     def install(self, source):
         source_path = Path(source).resolve()
         manifest = source_path / "ucod.toml"

@@ -70,11 +70,17 @@ def test_general_builtins():
 кількість = довжина(числа)
 опис = тип(числа)
 рядок = текст(42)
+загальна_сума = сума(числа)
+пари = перелічити(числа)
+унікальні = набір([1, 1, 2])
 """)
     assert interpreter.global_env["числа"] == [1, 2, 3]
     assert interpreter.global_env["кількість"] == 3
     assert interpreter.global_env["опис"] == "list"
     assert interpreter.global_env["рядок"] == "42"
+    assert interpreter.global_env["загальна_сума"] == 6
+    assert interpreter.global_env["пари"] == [(0, 1), (1, 2), (2, 3)]
+    assert interpreter.global_env["унікальні"] == {1, 2}
 
 
 def test_standard_library_modules(tmp_path):

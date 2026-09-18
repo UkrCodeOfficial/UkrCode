@@ -14,13 +14,15 @@ def main(argv=None):
         argv = ["run", *argv]
     parser = argparse.ArgumentParser(prog="ucod", description="Інтерпретатор UkrCode")
     parser.add_argument("--version", action="version", version=f"UkrCode {__version__}")
-    parser.add_argument("command", nargs="?", default="version", choices=["run", "check", "format", "test", "repl", "version", "новий", "встановити", "видалити", "оновити", "список"])
+    parser.add_argument("command", nargs="?", default="version", choices=["run", "check", "format", "test", "repl", "version", "новий", "нова-бібліотека", "встановити", "видалити", "оновити", "список"])
     parser.add_argument("file", nargs="?")
     args = parser.parse_args(argv)
     if args.command == "version": print(f"UkrCode {__version__}"); return 0
     manager = PackageManager()
     if args.command == "новий":
         print(f"Створено проєкт: {manager.create(args.file)}"); return 0
+    if args.command == "нова-бібліотека":
+        print(f"Створено бібліотеку: {manager.create_library(args.file)}"); return 0
     if args.command == "встановити":
         print(f"Встановлено: {manager.install(args.file)}"); return 0
     if args.command == "видалити":
@@ -40,7 +42,8 @@ def main(argv=None):
         import subprocess
         return subprocess.call([sys.executable, "-m", "pytest", "-q"])
     if args.command == "run":
-        Interpreter().run(pathlib.Path(args.file).read_text(encoding="utf-8")); return 0
+        path = pathlib.Path(args.file)
+        Interpreter().run(path.read_text(encoding="utf-8"), path); return 0
     print(f"UkrCode {__version__}\nВведіть 'вийти' для завершення.")
     interpreter = Interpreter()
     while True:

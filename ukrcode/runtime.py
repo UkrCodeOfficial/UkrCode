@@ -391,6 +391,9 @@ def stdlib(interpreter):
         "діапазон": lambda *values: list(range(*values)),
         "довжина": len, "тип": lambda value: type(value).__name__,
         "текст": str, "ціле": int, "дробове": float,
+        "сума": sum, "мінімум": min, "максимум": max,
+        "перелічити": lambda values, початок=0: list(enumerate(values, початок)),
+        "відсортувати": sorted, "набір": set,
     }
     return {
         **builtins, "середовище": env, "Математика": math_module,
@@ -403,14 +406,23 @@ def stdlib(interpreter):
 
 
 class Interpreter:
-    def __init__(self):
+    def __init__(self, current_dir=None):
         load_dotenv()
+        self.current_dir = Path(current_dir or Path.cwd())
         self.global_env = Environment()
         self.global_env.update(stdlib(self))
+        self.exported_names = set()
 
-    def run(self, source):
+    def run(self, source, source_path=None):
+        if source_path:
+            self.current_dir = Path(source_path).resolve().parent
+        self.exported_names = set()
+        self.global_env = Environment()
+        self.global_env.update(stdlib(self))
         program = Parser(Lexer().tokenize(source)).parse()
         self.execute(program, self.global_env)
+        if self.exported_names:
+            return {name: self.global_env[name] for name in sorted(self.exported_names)}
         return self.global_env
 
     def execute(self, statements, environment):
@@ -439,7 +451,16 @@ class Interpreter:
             else: raise UkrCodeError("оновлювати можна лише змінну")
         elif kind == "expr": self.evaluate(data[0], env)
         elif kind == "import":
-            name, alias = data; env[alias or name] = self.global_env.get(name, Module())
+            name, alias = data
+            if name in self.global_env:
+                env[alias or name] = self.global_env[name]
+            else:
+                env[alias or name] = self.load_module(name)
+        elif kind == "export":
+            inner, export_name = data
+            self.execute_statement(inner, env)
+            if export_name:
+                self.exported_names.add(export_name)
         elif kind == "function": env[data[0]] = UserFunction(data[0], data[1], data[2], env)
         elif kind == "class":
             parent = env.get_value(data[1]) if data[1] else None
@@ -474,6 +495,15 @@ class Interpreter:
         elif kind == "when":
             event = self.evaluate(data[0], env)
             if isinstance(event, EventSpec): event.bot.register(event, data[1], env)
+
+    def load_module(self, name):
+        candidates = [self.current_dir / f"{name}.ucod", self.current_dir / name / "main.ucod", self.current_dir / ".ucod" / "packages" / name / "main.ucod"]
+        path = next((candidate for candidate in candidates if candidate.exists()), None)
+        if path is None:
+            raise UkrCodeError(f'не знайдено бібліотеку "{name}"')
+        module_interpreter = Interpreter(path.parent)
+        values = module_interpreter.run(path.read_text(encoding="utf-8"), path)
+        return Module(**{key: value for key, value in values.items() if not key.startswith("__")})
 
     def evaluate(self, expression, env):
         if isinstance(expression, Literal): return expression.value
