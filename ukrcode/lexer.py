@@ -22,6 +22,7 @@ class Lexer:
     def tokenize(self, source: str) -> list[Token]:
         tokens: list[Token] = []
         indents = [0]
+        group_depth = 0
         at_line_start = True
         line = 1
         column = 1
@@ -31,13 +32,13 @@ class Lexer:
                 line += 1
                 continue
             indent = len(content) - len(content.lstrip(" "))
-            if indent > indents[-1]:
+            if group_depth == 0 and indent > indents[-1]:
                 indents.append(indent)
                 tokens.append(Token("INDENT", indent, line, 1))
-            while indent < indents[-1]:
+            while group_depth == 0 and indent < indents[-1]:
                 indents.pop()
                 tokens.append(Token("DEDENT", indent, line, 1))
-            if indent != indents[-1]:
+            if group_depth == 0 and indent != indents[-1]:
                 raise UkrCodeError("неправильний відступ", line, 1)
             position = indent
             while position < len(content):
@@ -63,6 +64,8 @@ class Lexer:
                     kind = "NAME"
                 else:
                     kind = "OP"
+                    if value in "([{": group_depth += 1
+                    elif value in ")]}": group_depth = max(0, group_depth - 1)
                 tokens.append(Token(kind, value, line, position - len(match.group())))
             tokens.append(Token("NEWLINE", "\n", line, len(content) + 1))
             line += 1

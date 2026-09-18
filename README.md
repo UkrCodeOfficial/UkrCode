@@ -5,6 +5,19 @@ automation, CLI tools and bot integrations. Source files use `.ucod`.
 
 ## Quick start
 
+Швидке встановлення всього UkrCode на Linux або macOS однією командою:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/UkrCodeOfficial/UkrCode/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+cd "$HOME/.ukrcode"
+ucod run examples/hello.ucod
+```
+
+Ця команда завантажує весь репозиторій, створює ізольоване Python-середовище,
+встановлює CLI `ucod`, копіює `.env.example` у `.env` та автоматично збирає й
+встановлює VS Code extension, якщо в системі є `npm` і `code`.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -22,6 +35,11 @@ cd UkrCode
 python -m pip install -e .
 ucod run examples/hello.ucod
 ```
+
+Інсталятор завантажує весь репозиторій у `~/.ukrcode`, створює Python
+середовище, встановлює `ucod` і, якщо доступний `code`, встановлює VS Code
+extension. Файл `~/.ukrcode/.env` створюється з `.env.example`; вставте токен
+лише туди.
 
 Щоб встановити підтримку `.ucod` у VS Code:
 
@@ -64,6 +82,34 @@ Available standard modules include `Математика`, `Текст`, `Спи
 `Файли`, `ОС`, `Дата`, `Час`, `Випадковість`, `РегулярніВирази`, `Термінал`,
 `Процеси`, `Логування`, `HTTP`, `БазаДаних` and `Telegram`.
 
+Для звичайної логіки проєкту UkrCode підтримує класи, конструктори, методи,
+обʼєкти, наслідування та вбудовані `діапазон`, `довжина`, `тип`, `текст`,
+`ціле`, `дробове`, `введення`.
+
+Для Discord automation доступний webhook:
+
+```bash
+DISCORD_WEBHOOK_URL="ваш_url" ucod run examples/discord-webhook.ucod
+```
+
+Webhook надсилає повідомлення, але ще не є повним Discord Gateway-ботом із
+slash commands та voice events.
+
+## Пакети та проєкти
+
+```bash
+ucod новий мійбот
+cd мійбот
+ucod встановити ../спільна-бібліотека
+ucod список
+ucod оновити
+ucod видалити спільна-бібліотека
+```
+
+Локальні залежності зберігаються в `.ucod/packages`, а їхній lock-файл — у
+`ucod.lock`. Registry-сервер і semantic version resolution залишаються окремим
+наступним етапом.
+
 Example SQLite usage:
 
 ```ucod
@@ -83,10 +129,21 @@ polling. It requires a token in the environment and never stores that token
 in source code:
 
 ```bash
-BOT_TOKEN="ваш_токен" ucod run examples/telegram-bot.ucod
+cp .env.example .env
+# Відкрийте .env і вставте BOT_TOKEN
+ucod run examples/telegram-bot.ucod
 ```
 
 The complete example is in [examples/telegram-bot.ucod](examples/telegram-bot.ucod).
+UkrCode автоматично завантажує локальний `.env`; цей файл не потрібно передавати
+в терміналі й він ігнорується Git.
+
+Великий приклад магазину Roblox Studio з каталогом, замовленнями, сесіями
+користувачів та адмін-панеллю: [examples/roblox-service-shop.ucod](examples/roblox-service-shop.ucod).
+
+Для повної довідки, яку можна передавати ШІ для генерації UkrCode, дивіться
+[docs/AI_LANGUAGE_SPEC.md](docs/AI_LANGUAGE_SPEC.md). Ця специфікація оновлюється
+разом із мовою.
 
 ## Repository
 

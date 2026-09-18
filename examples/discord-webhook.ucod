@@ -1,0 +1,5 @@
+# Запуск: DISCORD_WEBHOOK_URL=ваш_url ucod run examples/discord-webhook.ucod
+імпортувати Discord
+
+бот = Discord.Бот(середовище("DISCORD_WEBHOOK_URL"))
+бот.надіслати("Повідомлення від UkrCode")

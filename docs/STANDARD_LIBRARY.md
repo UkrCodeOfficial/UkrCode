@@ -18,4 +18,4 @@
 | `Логування` | отримання logger та базове налаштування |
 | `HTTP` | GET і JSON POST |
 | `БазаДаних` | SQLite: таблиці, вставка, пошук, raw SQL |
-| `Telegram` | Bot API polling, команди, повідомлення, відповіді |
+| `Telegram` | Bot API polling, команди, текстові фільтри, reply/inline-кнопки, callback queries, фото, документи, редагування та видалення |

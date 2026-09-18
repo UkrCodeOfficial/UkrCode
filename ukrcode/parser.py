@@ -51,6 +51,21 @@ class Attribute:
 
 
 @dataclass
+class Index:
+    object: object
+    start: object
+    stop: object = None
+    step: object = None
+
+
+@dataclass
+class UserClass:
+    name: str
+    parent: object
+    body: list
+
+
+@dataclass
 class Statement:
     kind: str
     data: tuple
@@ -96,7 +111,7 @@ class Parser:
 
     def statement(self):
         word = self.current.value
-        if word in {"якщо", "поки", "для", "повторити", "функція", "асинхронна", "спробувати", "коли"}:
+        if word in {"якщо", "поки", "для", "повторити", "функція", "асинхронна", "спробувати", "коли", "клас"}:
             return self.compound()
         if word == "імпортувати":
             self.advance(); module = self.name(); alias = None
@@ -122,6 +137,9 @@ class Parser:
         if isinstance(expression, Attribute) and self.accept("="):
             value = self.expression(); self.expect("\n")
             return Statement("setattr", (expression, value))
+        if isinstance(expression, Index) and self.accept("="):
+            value = self.expression(); self.expect("\n")
+            return Statement("setitem", (expression, value))
         if self.current.value in {"=", "+=", "-=", "*=", "/="}:
             operator = self.advance().value; value = self.expression(); self.expect("\n")
             return Statement("update", (expression, operator, value))
@@ -144,6 +162,13 @@ class Parser:
         if word == "функція":
             name = self.name(); params = self.parameters(); body = self.block()
             return Statement("function", (name, params, body))
+        if word == "клас":
+            name = self.name()
+            parent = None
+            if self.accept("("):
+                parent = self.name()
+                self.expect(")")
+            return Statement("class", (name, parent, self.block()))
         if word == "якщо":
             branches = [(self.expression(), self.block())]
             while self.current.value == "інакше":
@@ -187,13 +212,27 @@ class Parser:
         expression = self.primary()
         while True:
             if self.accept("."): expression = Attribute(expression, self.name())
+            elif self.accept("["):
+                start = None if self.current.value == ":" else self.expression()
+                if self.accept(":"):
+                    stop = None if self.current.value in {":", "]"} else self.expression()
+                    step = None
+                    if self.accept(":"): step = None if self.current.value == "]" else self.expression()
+                    self.expect("]")
+                    expression = Index(expression, start, stop, step)
+                else:
+                    self.expect("]")
+                    expression = Index(expression, start)
             elif self.accept("("):
                 args, kwargs = [], {}
+                while self.current.kind == "NEWLINE": self.advance()
                 while self.current.value != ")":
                     if self.current.kind == "NAME" and self.tokens[self.position + 1].value == "=":
                         key = self.name(); self.expect("="); kwargs[key] = self.expression()
                     else: args.append(self.expression())
+                    while self.current.kind == "NEWLINE": self.advance()
                     if not self.accept(","): break
+                    while self.current.kind == "NEWLINE": self.advance()
                 self.expect(")"); expression = Call(expression, args, kwargs)
             else: break
         return expression
@@ -209,14 +248,20 @@ class Parser:
             expression = self.expression(); self.expect(")"); return expression
         if token.value == "[":
             items = []
+            while self.current.kind == "NEWLINE": self.advance()
             while self.current.value != "]":
                 items.append(self.expression())
+                while self.current.kind == "NEWLINE": self.advance()
                 if not self.accept(","): break
+                while self.current.kind == "NEWLINE": self.advance()
             self.expect("]"); return ListExpr(items)
         if token.value == "{":
             items = []
+            while self.current.kind == "NEWLINE": self.advance()
             while self.current.value != "}":
                 key = self.expression(); self.expect(":"); items.append((key, self.expression()))
+                while self.current.kind == "NEWLINE": self.advance()
                 if not self.accept(","): break
+                while self.current.kind == "NEWLINE": self.advance()
             self.expect("}"); return DictExpr(items)
         raise UkrCodeError(f"неочікуваний токен {token.value!r}", token.line, token.column)

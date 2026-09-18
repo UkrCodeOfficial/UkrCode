@@ -4,6 +4,7 @@ import os
 import json
 import urllib.request
 import urllib.parse
+import urllib.error
 import time
 import datetime
 import logging
@@ -13,11 +14,12 @@ import re
 import shutil
 import sqlite3
 import subprocess
+from pathlib import Path
 from dataclasses import dataclass
 
 from .errors import UkrCodeError
 from .lexer import Lexer
-from .parser import Attribute, Binary, Call, DictExpr, ListExpr, Literal, Name, Statement, Unary
+from .parser import Attribute, Binary, Call, DictExpr, Index, ListExpr, Literal, Name, Statement, Unary, UserClass
 from .parser import Parser
 
 
@@ -37,6 +39,22 @@ class UserFunction:
     closure: dict
 
 
+class UserObject:
+    def __init__(self, class_definition):
+        self.class_definition = class_definition
+        self.fields = {}
+
+
+class BoundMethod:
+    def __init__(self, function, instance, interpreter):
+        self.function = function
+        self.instance = instance
+        self.interpreter = interpreter
+
+    def __call__(self, *args, **kwargs):
+        return self.interpreter.call_user_function(self.function, [self.instance, *args], kwargs, self.interpreter.global_env)
+
+
 class Module:
     def __init__(self, **values): self.__dict__.update(values)
 
@@ -48,6 +66,24 @@ class EventSpec:
     value: object
 
 
+class BotSession:
+    def __init__(self, data):
+        self.data = data
+
+    def отримати(self, key, default=None):
+        return self.data.get(key, default)
+
+    def встановити(self, key, value):
+        self.data[key] = value
+        return value
+
+    def видалити(self, key):
+        return self.data.pop(key, None)
+
+    def очистити(self):
+        self.data.clear()
+
+
 class TelegramBot:
     def __init__(self, token, interpreter):
         if not token:
@@ -56,7 +92,12 @@ class TelegramBot:
         self.interpreter = interpreter
         self.handlers = []
         self.current_message = None
+        self.current_callback_id = None
         self.offset = 0
+        self.sessions = {}
+        self.orders = []
+        self.next_order_id = 1
+        self.admin_ids = {item.strip() for item in os.environ.get("ADMIN_IDS", "").split(",") if item.strip()}
         self.api_url = f"https://api.telegram.org/bot{token}/"
 
     def команда(self, command):
@@ -65,50 +106,135 @@ class TelegramBot:
     def отримав_повідомлення(self, message=None):
         return EventSpec(self, "message", message)
 
+    def отримав_текст(self, text):
+        return EventSpec(self, "text", text)
+
+    def натиснули_кнопку(self, data=None):
+        return EventSpec(self, "callback", data)
+
+    def сесія(self, user_id):
+        key = str(user_id)
+        return BotSession(self.sessions.setdefault(key, {}))
+
+    def є_адмін(self, user_id):
+        return str(user_id) in self.admin_ids
+
+    def створити_замовлення(self, user_id, послуга, ціна):
+        order = {"ід": self.next_order_id, "користувач": user_id, "послуга": послуга, "ціна": ціна, "статус": "нове"}
+        self.orders.append(order)
+        self.next_order_id += 1
+        return order
+
+    def отримати_замовлення(self, user_id=None):
+        if user_id is None: return self.orders
+        return [order for order in self.orders if order["користувач"] == user_id]
+
     def register(self, event, body, environment):
         self.handlers.append((event, body, environment))
 
     def _api(self, method, data=None):
         payload = urllib.parse.urlencode(data or {}).encode("utf-8")
         request = urllib.request.Request(self.api_url + method, data=payload)
-        with urllib.request.urlopen(request, timeout=60) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            if error.code in {401, 404}:
+                raise UkrCodeError("Telegram не прийняв токен. Перевірте BOT_TOKEN або створіть новий токен у BotFather") from error
+            raise UkrCodeError(f"Telegram HTTP помилка {error.code}") from error
+        except urllib.error.URLError as error:
+            raise UkrCodeError(f"не вдалося підключитися до Telegram: {error.reason}") from error
         if not result.get("ok"):
             raise UkrCodeError(f"Telegram API: {result.get('description', 'невідома помилка')}")
         return result["result"]
 
-    def відправити(self, text, chat_id=None):
+    def відправити(self, text, chat_id=None, кнопки=None, inline_кнопки=None):
         chat_id = chat_id or (self.current_message.chat_id if self.current_message else None)
         if chat_id is None:
             raise UkrCodeError("немає активного чату для відповіді")
-        return self._api("sendMessage", {"chat_id": chat_id, "text": text})
+        data = {"chat_id": chat_id, "text": text}
+        if кнопки:
+            data["reply_markup"] = json.dumps({
+                "keyboard": кнопки,
+                "resize_keyboard": True,
+                "one_time_keyboard": False,
+            }, ensure_ascii=False)
+        if inline_кнопки:
+            data["reply_markup"] = json.dumps({
+                "inline_keyboard": [
+                    [{"text": button.get("текст", button.get("text", "")), "callback_data": button.get("дані", button.get("callback_data", ""))} for button in row]
+                    for row in inline_кнопки
+                ]
+            }, ensure_ascii=False)
+        return self._api("sendMessage", data)
 
-    def відповісти(self, text):
-        return self.відправити(text)
+    def відповісти(self, text, кнопки=None, inline_кнопки=None):
+        return self.відправити(text, кнопки=кнопки, inline_кнопки=inline_кнопки)
+
+    def надіслати_фото(self, фото, підпис=None, chat_id=None):
+        chat_id = chat_id or (self.current_message.chat_id if self.current_message else None)
+        if chat_id is None: raise UkrCodeError("немає активного чату для фото")
+        data = {"chat_id": chat_id, "photo": фото}
+        if підпис: data["caption"] = підпис
+        return self._api("sendPhoto", data)
+
+    def надіслати_документ(self, документ, підпис=None, chat_id=None):
+        chat_id = chat_id or (self.current_message.chat_id if self.current_message else None)
+        if chat_id is None: raise UkrCodeError("немає активного чату для документа")
+        data = {"chat_id": chat_id, "document": документ}
+        if підпис: data["caption"] = підпис
+        return self._api("sendDocument", data)
+
+    def редагувати_повідомлення(self, message_id, text, chat_id=None, inline_кнопки=None):
+        chat_id = chat_id or (self.current_message.chat_id if self.current_message else None)
+        data = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if inline_кнопки:
+            data["reply_markup"] = json.dumps({"inline_keyboard": [[
+                {"text": button.get("текст", button.get("text", "")), "callback_data": button.get("дані", button.get("callback_data", ""))}
+                for button in row
+            ] for row in inline_кнопки]}, ensure_ascii=False)
+        return self._api("editMessageText", data)
+
+    def видалити_повідомлення(self, message_id, chat_id=None):
+        chat_id = chat_id or (self.current_message.chat_id if self.current_message else None)
+        return self._api("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
 
     def _matches(self, event, message):
-        if event.kind == "message": return True
-        return (message.text or "").split(" ", 1)[0] == event.value
+        if event.kind == "message": return not message.callback_data and (event.value is None or message.текст == event.value)
+        if event.kind == "text": return not message.callback_data and message.текст == event.value
+        if event.kind == "callback": return message.callback_data == event.value if event.value else bool(message.callback_data)
+        return (message.текст or "").split(" ", 1)[0] == event.value
 
     def _message(self, update):
-        raw = update.get("message", {})
+        callback = update.get("callback_query", {})
+        raw = callback.get("message", {}) if callback else update.get("message", {})
         chat_id = raw.get("chat", {}).get("id")
         return Module(**{
             "текст": raw.get("text", ""),
+            "ід": raw.get("message_id"),
+            "callback_data": callback.get("data", "") if callback else "",
             "chat_id": chat_id,
-            "користувач": Module(**raw.get("from", {})),
-            "відповісти": lambda text: self.відправити(text, chat_id),
+            "користувач": Module(**(callback.get("from", {}) if callback else raw.get("from", {}))),
+            "відповісти": lambda text, кнопки=None, inline_кнопки=None: self.відправити(text, chat_id, кнопки, inline_кнопки),
+            "фото": lambda фото, підпис=None: self.надіслати_фото(фото, підпис, chat_id),
+            "документ": lambda документ, підпис=None: self.надіслати_документ(документ, підпис, chat_id),
+            "редагувати": lambda text, inline_кнопки=None: self.редагувати_повідомлення(raw.get("message_id"), text, chat_id, inline_кнопки),
+            "видалити": lambda: self.видалити_повідомлення(raw.get("message_id"), chat_id),
         })
 
     def обробити(self, update):
         message = self._message(update)
+        self.current_callback_id = update.get("callback_query", {}).get("id")
         self.current_message = message
         for event, body, environment in self.handlers:
             if self._matches(event, message):
                 child = Environment(environment)
                 child["повідомлення"] = message
                 self.interpreter.execute(body, child)
+        if self.current_callback_id:
+            self._api("answerCallbackQuery", {"callback_query_id": self.current_callback_id})
         self.current_message = None
+        self.current_callback_id = None
 
     def запустити(self):
         print("Telegram-бот запущений (polling)")
@@ -118,6 +244,22 @@ class TelegramBot:
                 self.offset = update["update_id"] + 1
                 self.обробити(update)
             time.sleep(0.2)
+
+
+class DiscordBot:
+    def __init__(self, webhook_url):
+        if not webhook_url:
+            raise UkrCodeError("URL Discord webhook порожній; задайте DISCORD_WEBHOOK_URL")
+        self.webhook_url = webhook_url
+
+    def надіслати(self, text):
+        payload = json.dumps({"content": text}, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(self.webhook_url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request) as response:
+            return response.status
+
+    def відповісти(self, text):
+        return self.надіслати(text)
 
 
 class Database:
@@ -166,6 +308,21 @@ class Environment(dict):
         raise UkrCodeError(f'невідома змінна "{name}"')
 
     def get_value(self, name): return self.resolve(name)[name]
+
+
+def load_dotenv(path=None):
+    dotenv_path = Path(path or ".env")
+    if not dotenv_path.exists():
+        return
+    for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip().strip('"').strip("'")
+        if name:
+            os.environ.setdefault(name, value)
 
 
 def stdlib(interpreter):
@@ -227,19 +384,27 @@ def stdlib(interpreter):
             return Module(статус=response.status, текст=response.read().decode("utf-8"))
     http = Module(**{"отримати": http_get, "пост": http_post})
     telegram = Module(Бот=lambda token: TelegramBot(token, interpreter))
+    discord = Module(Бот=DiscordBot)
     database = Module(**{"підключити": Database})
+    builtins = {
+        "написати": write, "введення": input,
+        "діапазон": lambda *values: list(range(*values)),
+        "довжина": len, "тип": lambda value: type(value).__name__,
+        "текст": str, "ціле": int, "дробове": float,
+    }
     return {
-        "написати": write, "середовище": env, "Математика": math_module,
+        **builtins, "середовище": env, "Математика": math_module,
         "Текст": text, "Списки": lists, "JSON": json_module, "Файли": files,
         "ОС": operating_system, "Дата": date_module, "Час": time_module,
         "Випадковість": random_module, "РегулярніВирази": regex,
         "Термінал": terminal, "Процеси": processes, "Логування": logs,
-        "HTTP": http, "БазаДаних": database, "Telegram": telegram,
+        "HTTP": http, "БазаДаних": database, "Telegram": telegram, "Discord": discord,
     }
 
 
 class Interpreter:
     def __init__(self):
+        load_dotenv()
         self.global_env = Environment()
         self.global_env.update(stdlib(self))
 
@@ -254,17 +419,31 @@ class Interpreter:
     def execute_statement(self, statement, env):
         kind, data = statement.kind, statement.data
         if kind == "assign": env[data[0]] = self.evaluate(data[1], env)
-        elif kind == "setattr": setattr(self.evaluate(data[0].object, env), data[0].name, self.evaluate(data[1], env))
+        elif kind == "setattr":
+            target = self.evaluate(data[0].object, env)
+            value = self.evaluate(data[1], env)
+            if isinstance(target, UserObject): target.fields[data[0].name] = value
+            else: setattr(target, data[0].name, value)
+        elif kind == "setitem":
+            target = self.evaluate(data[0].object, env)
+            target[self.evaluate(data[0].start, env)] = self.evaluate(data[1], env)
         elif kind == "update":
             target, operator_name, value = data
             if isinstance(target, Name):
                 scope = env.resolve(target.value); current = scope[target.value]
                 scope[target.value] = self.apply_binary(current, operator_name[0], self.evaluate(value, env))
+            elif isinstance(target, Index):
+                collection = self.evaluate(target.object, env)
+                index = self.evaluate(target.start, env)
+                collection[index] = self.apply_binary(collection[index], operator_name[0], self.evaluate(value, env))
             else: raise UkrCodeError("оновлювати можна лише змінну")
         elif kind == "expr": self.evaluate(data[0], env)
         elif kind == "import":
             name, alias = data; env[alias or name] = self.global_env.get(name, Module())
         elif kind == "function": env[data[0]] = UserFunction(data[0], data[1], data[2], env)
+        elif kind == "class":
+            parent = env.get_value(data[1]) if data[1] else None
+            env[data[0]] = UserClass(data[0], parent, data[2])
         elif kind == "return": raise ReturnSignal(self.evaluate(data[0], env) if data[0] else None)
         elif kind == "підняти": raise UkrCodeError(str(self.evaluate(data[0], env)))
         elif kind == "перервати": raise BreakSignal()
@@ -301,20 +480,53 @@ class Interpreter:
         if isinstance(expression, Name): return env.get_value(expression.value)
         if isinstance(expression, ListExpr): return [self.evaluate(item, env) for item in expression.items]
         if isinstance(expression, DictExpr): return {self.evaluate(k, env): self.evaluate(v, env) for k, v in expression.items}
-        if isinstance(expression, Attribute): return getattr(self.evaluate(expression.object, env), expression.name)
+        if isinstance(expression, Attribute):
+            instance = self.evaluate(expression.object, env)
+            if isinstance(instance, UserObject):
+                if expression.name in instance.fields: return instance.fields[expression.name]
+                method = self.find_method(instance.class_definition, expression.name)
+                if method: return BoundMethod(method, instance, self)
+                raise UkrCodeError(f'обʼєкт не має властивості "{expression.name}"')
+            return getattr(instance, expression.name)
+        if isinstance(expression, Index):
+            collection = self.evaluate(expression.object, env)
+            start = self.evaluate(expression.start, env) if expression.start is not None else None
+            if expression.stop is None and expression.step is None:
+                return collection[start]
+            stop = self.evaluate(expression.stop, env) if expression.stop is not None else None
+            step = self.evaluate(expression.step, env) if expression.step is not None else None
+            return collection[slice(start, stop, step)]
         if isinstance(expression, Unary):
             value = self.evaluate(expression.expression, env); return not value if expression.op == "не" else (-value if expression.op == "-" else value)
         if isinstance(expression, Binary): return self.apply_binary(self.evaluate(expression.left, env), expression.op, self.evaluate(expression.right, env))
         if isinstance(expression, Call):
             function = self.evaluate(expression.function, env); args = [self.evaluate(arg, env) for arg in expression.args]; kwargs = {k: self.evaluate(v, env) for k, v in expression.kwargs.items()}
+            if isinstance(function, UserClass):
+                instance = UserObject(function)
+                initializer = self.find_method(function, "ініціалізувати")
+                if initializer: self.call_user_function(initializer, [instance, *args], kwargs, env)
+                return instance
             if isinstance(function, UserFunction):
-                child = Environment(function.closure)
-                for index, (name, default) in enumerate(function.params): child[name] = args[index] if index < len(args) else self.evaluate(default, env) if default else None
-                try: self.execute(function.body, child)
-                except ReturnSignal as signal: return signal.value
-                return None
+                return self.call_user_function(function, args, kwargs, env)
             return function(*args, **kwargs)
         raise UkrCodeError("невідомий вираз")
+
+    def find_method(self, class_definition, name):
+        current = class_definition
+        while current:
+            for statement in current.body:
+                if statement.kind == "function" and statement.data[0] == name:
+                    return UserFunction(statement.data[0], statement.data[1], statement.data[2], {"__class__": current})
+            current = current.parent if isinstance(current.parent, UserClass) else None
+        return None
+
+    def call_user_function(self, function, args, kwargs, env):
+        child = Environment(function.closure)
+        for index, (name, default) in enumerate(function.params):
+            child[name] = kwargs.get(name, args[index] if index < len(args) else self.evaluate(default, env) if default else None)
+        try: self.execute(function.body, child)
+        except ReturnSignal as signal: return signal.value
+        return None
 
     def apply_binary(self, left, op, right):
         if op == "і": return left and right

@@ -2,15 +2,18 @@
 
 - [x] Lexer з українськими іменами та відступами
 - [x] Parser і AST для базового синтаксису
+- [x] Класи, обʼєкти, конструктори, методи та просте наслідування
 - [x] Інтерпретатор та CLI `ucod`
 - [x] Базова стандартна бібліотека
 - [x] Приклади та regression-тести
 - [x] VS Code grammar і snippets
 - [x] Telegram Bot API adapter з polling та обробниками
+- [x] Telegram keyboards, callback queries, media та message operations
 - [ ] Повна система типів та semantic diagnostics
 - [ ] Bytecode VM та оптимізатор
-- [ ] Package manager, `ucod.toml` і lock-файл
-- [ ] Discord adapter
+- [x] Локальний package manager, `ucod.toml` і `ucod.lock`
+- [x] Discord webhook adapter для outbound-повідомлень
+- [ ] Повний Discord Gateway/slash commands adapter
 - [ ] Language Server Protocol і debugger
 - [ ] Native compiler
 
