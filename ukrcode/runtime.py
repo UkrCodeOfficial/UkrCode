@@ -5,6 +5,14 @@ import json
 import urllib.request
 import urllib.parse
 import time
+import datetime
+import logging
+import os
+import random
+import re
+import shutil
+import sqlite3
+import subprocess
 from dataclasses import dataclass
 
 from .errors import UkrCodeError
@@ -112,6 +120,42 @@ class TelegramBot:
             time.sleep(0.2)
 
 
+class Database:
+    def __init__(self, path):
+        self.connection = sqlite3.connect(path)
+        self.connection.row_factory = sqlite3.Row
+
+    def виконати(self, query, параметри=None):
+        cursor = self.connection.execute(query, параметри or {})
+        self.connection.commit()
+        return [dict(row) for row in cursor.fetchall()]
+
+    def додати(self, table, values):
+        columns = ", ".join(values)
+        placeholders = ", ".join(f":{column}" for column in values)
+        cursor = self.connection.execute(f"INSERT INTO {table} ({columns}) VALUES ({placeholders})", values)
+        self.connection.commit()
+        return cursor.lastrowid
+
+    def знайти_одного(self, table, де=None):
+        conditions = " AND ".join(f"{key} = :{key}" for key in (де or {})) or "1 = 1"
+        row = self.connection.execute(f"SELECT * FROM {table} WHERE {conditions} LIMIT 1", де or {}).fetchone()
+        return dict(row) if row else None
+
+    def створити_таблицю(self, table, columns):
+        definition = ", ".join(f"{name} {self._sql_type(value)}" for name, value in columns.items())
+        self.connection.execute(f"CREATE TABLE IF NOT EXISTS {table} ({definition})")
+        self.connection.commit()
+
+    @staticmethod
+    def _sql_type(value):
+        names = {"текст": "TEXT", "число": "INTEGER", "дробове": "REAL", "логічне": "INTEGER"}
+        return names.get(value, value if isinstance(value, str) else "TEXT")
+
+    def закрити(self):
+        self.connection.close()
+
+
 class Environment(dict):
     def __init__(self, parent=None):
         super().__init__(); self.parent = parent
@@ -127,15 +171,71 @@ class Environment(dict):
 def stdlib(interpreter):
     def write(*values): print(*values)
     def env(name): return os.environ.get(name, "")
+    text = Module(**{
+        "довжина": len,
+        "верхній_регістр": lambda value: value.upper(),
+        "нижній_регістр": lambda value: value.lower(),
+        "обрізати": lambda value: value.strip(),
+        "містить": lambda value, part: part in value,
+        "замінити": lambda value, old, new: value.replace(old, new),
+        "розділити": lambda value, separator: value.split(separator),
+        "об'єднати": lambda values, separator: separator.join(values),
+    })
+    lists = Module(**{
+        "довжина": len,
+        "додати": lambda values, value: values.append(value) or values,
+        "видалити": lambda values, value: values.remove(value) or values,
+        "відсортувати": lambda values: sorted(values),
+        "містить": lambda values, value: value in values,
+    })
     math_module = Module(**{"округлити": round, "абс": abs, "мін": min, "макс": max, "корінь": math.sqrt, "пі": math.pi})
     json_module = Module(**{"розібрати": json.loads, "створити": lambda value: json.dumps(value, ensure_ascii=False)})
-    files = Module(**{"прочитати": lambda path: open(path, encoding="utf-8").read(), "записати": lambda path, text: open(path, "w", encoding="utf-8").write(text), "існує": os.path.exists, "видалити": os.remove})
+    files = Module(**{
+        "прочитати": lambda path: open(path, encoding="utf-8").read(),
+        "записати": lambda path, text: open(path, "w", encoding="utf-8").write(text),
+        "існує": os.path.exists,
+        "видалити": os.remove,
+        "створити_директорію": lambda path: os.makedirs(path, exist_ok=True),
+        "скопіювати": shutil.copy2,
+        "перемістити": shutil.move,
+        "розмір": os.path.getsize,
+    })
+    operating_system = Module(**{
+        "ім'я": os.name,
+        "поточна_директорія": os.getcwd,
+        "змінні": lambda: dict(os.environ),
+        "встановлено": lambda name: shutil.which(name) is not None,
+    })
+    date_module = Module(**{
+        "зараз": lambda: datetime.datetime.now().isoformat(sep=" ", timespec="seconds"),
+        "сьогодні": lambda: datetime.date.today().isoformat(),
+        "часова_мітка": time.time,
+    })
+    time_module = Module(**{"затримка": time.sleep, "зараз": time.time})
+    random_module = Module(**{"число": random.random, "ціле": random.randint, "вибрати": random.choice, "перемішати": random.shuffle})
+    regex = Module(**{"знайти": lambda pattern, value: re.findall(pattern, value), "заміна": lambda pattern, replacement, value: re.sub(pattern, replacement, value), "збігається": lambda pattern, value: re.search(pattern, value) is not None})
+    terminal = Module(**{"очистити": lambda: print("\033[2J\033[H", end=""), "прочитати": input, "колір": lambda value, color: f"\033[{color}m{value}\033[0m"})
+    processes = Module(**{"запустити": lambda command: subprocess.run(command, shell=True, check=True, capture_output=True, text=True).stdout})
+    logs = Module(**{"отримати": lambda name: logging.getLogger(name), "налаштувати": lambda: logging.basicConfig(level=logging.INFO)})
     def http_get(url):
         with urllib.request.urlopen(url) as response:
             return Module(статус=response.status, текст=response.read().decode("utf-8"))
-    http = Module(**{"отримати": http_get})
+    def http_post(url, дані):
+        payload = json.dumps(дані, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request) as response:
+            return Module(статус=response.status, текст=response.read().decode("utf-8"))
+    http = Module(**{"отримати": http_get, "пост": http_post})
     telegram = Module(Бот=lambda token: TelegramBot(token, interpreter))
-    return {"написати": write, "середовище": env, "Математика": math_module, "JSON": json_module, "Файли": files, "HTTP": http, "Telegram": telegram}
+    database = Module(**{"підключити": Database})
+    return {
+        "написати": write, "середовище": env, "Математика": math_module,
+        "Текст": text, "Списки": lists, "JSON": json_module, "Файли": files,
+        "ОС": operating_system, "Дата": date_module, "Час": time_module,
+        "Випадковість": random_module, "РегулярніВирази": regex,
+        "Термінал": terminal, "Процеси": processes, "Логування": logs,
+        "HTTP": http, "БазаДаних": database, "Telegram": telegram,
+    }
 
 
 class Interpreter:

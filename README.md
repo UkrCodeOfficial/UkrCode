@@ -60,6 +60,22 @@ lists, dictionaries, arithmetic and comparison operators, `якщо`, `інак�
 `нарешті`, `повернути`, `перервати`, `продовжити`, JSON, files, environment
 variables and a small HTTP client. It has no AI dependency and runs locally.
 
+Available standard modules include `Математика`, `Текст`, `Списки`, `JSON`,
+`Файли`, `ОС`, `Дата`, `Час`, `Випадковість`, `РегулярніВирази`, `Термінал`,
+`Процеси`, `Логування`, `HTTP`, `БазаДаних` and `Telegram`.
+
+Example SQLite usage:
+
+```ucod
+імпортувати БазаДаних
+
+бд = БазаДаних.підключити("дані.sqlite")
+бд.створити_таблицю("користувачі", {"імʼя": "текст", "вік": "число"})
+бд.додати("користувачі", {"імʼя": "Ярема", "вік": 12})
+користувач = бд.знайти_одного("користувачі", де = {"імʼя": "Ярема"})
+написати(користувач)
+```
+
 ## Telegram bot
 
 The first Telegram adapter uses the official Bot API over HTTPS and long

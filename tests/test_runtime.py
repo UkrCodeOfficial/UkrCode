@@ -25,6 +25,24 @@ def test_functions_and_collections():
     assert interpreter.global_env["дані"]["значення"] == 5
 
 
+def test_standard_library_modules(tmp_path):
+    interpreter = Interpreter()
+    database_path = tmp_path / "data.sqlite"
+    interpreter.run(f"""
+імпортувати БазаДаних
+імпортувати Текст
+імпортувати JSON
+бд = БазаДаних.підключити("{database_path}")
+бд.створити_таблицю("люди", {{"імʼя": "текст", "вік": "число"}})
+бд.додати("люди", {{"імʼя": "Ярема", "вік": 12}})
+результат = бд.знайти_одного("люди", де = {{"імʼя": "Ярема"}})
+довжина = Текст.довжина(Текст.верхній_регістр("ukrcode"))
+дані = JSON.розібрати(JSON.створити({{"довжина": довжина}}))
+""")
+    assert interpreter.global_env["результат"]["вік"] == 12
+    assert interpreter.global_env["дані"]["довжина"] == 7
+
+
 def test_telegram_handlers_are_registered(monkeypatch):
     monkeypatch.setenv("BOT_TOKEN", "test-token")
     interpreter = Interpreter()
