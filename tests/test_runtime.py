@@ -27,6 +27,26 @@ def test_functions_and_collections():
     assert interpreter.global_env["дані"]["значення"] == 5
 
 
+def test_inline_python_extension_is_available_to_ukrcode(capsys):
+    interpreter = Interpreter()
+    interpreter.run('''
+пайтон("""
+def помножити(а, б):
+    return а * б
+
+class Розширення:
+    def назва(self):
+        return "Python API"
+""")
+
+результат = помножити(6, 7)
+написати(Розширення().назва())
+''')
+
+    assert interpreter.global_env["результат"] == 42
+    assert capsys.readouterr().out.strip() == "Python API"
+
+
 def test_indexing_slices_and_indexed_updates():
     interpreter = Interpreter()
     interpreter.run("""
@@ -99,6 +119,22 @@ def test_standard_library_modules(tmp_path):
 """)
     assert interpreter.global_env["результат"]["вік"] == 12
     assert interpreter.global_env["дані"]["довжина"] == 7
+
+
+def test_http_server_routes_and_start_stop():
+    interpreter = Interpreter()
+    interpreter.run('''
+імпортувати HTTP
+сервер = HTTP.сервер("127.0.0.1", 8000)
+сервер.маршрут("/", функція(запит):
+    повернути {"ok": так, "path": запит["path"]}
+)
+''')
+    server = interpreter.global_env["сервер"]
+    assert server.host == "127.0.0.1"
+    assert server.port == 8000
+    assert "/" in server.routes
+    server.зупинити()
 
 
 def test_telegram_handlers_are_registered(monkeypatch):

@@ -66,6 +66,12 @@ class UserClass:
 
 
 @dataclass
+class LambdaExpr:
+    params: list
+    body: list
+
+
+@dataclass
 class Statement:
     kind: str
     data: tuple
@@ -103,7 +109,7 @@ class Parser:
     def parse(self):
         statements = []
         while self.current.kind != "EOF":
-            if self.current.kind == "NEWLINE":
+            if self.current.kind in {"NEWLINE", "DEDENT"}:
                 self.advance()
             else:
                 statements.append(self.statement())
@@ -111,6 +117,12 @@ class Parser:
 
     def statement(self):
         word = self.current.value
+        word = {
+            "оголосити": "експорт",
+            "повернутися": "повернути",
+            "зупинити": "перервати",
+            "пропустити": "продовжити",
+        }.get(word, word)
         if word == "експорт":
             self.advance()
             inner = self.statement()
@@ -119,10 +131,13 @@ class Parser:
             if inner.kind == "assign":
                 return Statement("export", (inner, inner.data[0]))
             raise UkrCodeError("експорт підтримує лише функції, класи та змінні", self.current.line, self.current.column)
-        if word in {"якщо", "поки", "для", "повторити", "функція", "асинхронна", "спробувати", "коли", "клас"}:
+        if word in {"якщо", "поки", "доки", "для", "перебирати", "повторити", "повторювати", "функція", "процедура", "метод", "дія", "асинхронна", "спробувати", "тестувати", "коли", "обробити", "клас", "тип", "шаблон"}:
             return self.compound()
-        if word == "імпортувати":
-            self.advance(); module = self.name(); alias = None
+        if word in {"імпортувати", "підключити", "долучити"}:
+            self.advance(); module = self.name()
+            while self.accept("."):
+                module += "." + self.name()
+            alias = None
             if self.accept("як"): alias = self.name()
             self.expect("\n")
             return Statement("import", (module, alias))
@@ -164,7 +179,20 @@ class Parser:
         return statements
 
     def compound(self):
-        word = self.advance().value
+        word = {
+            "коли": "коли",
+            "процедура": "функція",
+            "метод": "функція",
+            "дія": "функція",
+            "тип": "клас",
+            "шаблон": "клас",
+            "доки": "поки",
+            "перебирати": "для",
+            "повторювати": "повторити",
+            "тестувати": "спробувати",
+            "обробити": "коли",
+        }.get(self.current.value, self.current.value)
+        self.advance()
         if word == "асинхронна":
             self.expect("функція"); word = "функція"
         if word == "функція":
@@ -233,14 +261,14 @@ class Parser:
                     expression = Index(expression, start)
             elif self.accept("("):
                 args, kwargs = [], {}
-                while self.current.kind == "NEWLINE": self.advance()
+                while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
                 while self.current.value != ")":
                     if self.current.kind == "NAME" and self.tokens[self.position + 1].value == "=":
                         key = self.name(); self.expect("="); kwargs[key] = self.expression()
                     else: args.append(self.expression())
-                    while self.current.kind == "NEWLINE": self.advance()
+                    while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
                     if not self.accept(","): break
-                    while self.current.kind == "NEWLINE": self.advance()
+                    while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
                 self.expect(")"); expression = Call(expression, args, kwargs)
             else: break
         return expression
@@ -251,25 +279,28 @@ class Parser:
         if token.value == "так": return Literal(True)
         if token.value == "ні": return Literal(False)
         if token.value == "нічого": return Literal(None)
-        if token.kind == "NAME": return Name(token.value)
+        if token.kind == "NAME":
+            if token.value == "функція":
+                params = self.parameters(); body = self.block(); return LambdaExpr(params, body)
+            return Name(token.value)
         if token.value == "(":
             expression = self.expression(); self.expect(")"); return expression
         if token.value == "[":
             items = []
-            while self.current.kind == "NEWLINE": self.advance()
+            while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
             while self.current.value != "]":
                 items.append(self.expression())
-                while self.current.kind == "NEWLINE": self.advance()
+                while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
                 if not self.accept(","): break
-                while self.current.kind == "NEWLINE": self.advance()
+                while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
             self.expect("]"); return ListExpr(items)
         if token.value == "{":
             items = []
-            while self.current.kind == "NEWLINE": self.advance()
+            while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
             while self.current.value != "}":
                 key = self.expression(); self.expect(":"); items.append((key, self.expression()))
-                while self.current.kind == "NEWLINE": self.advance()
+                while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
                 if not self.accept(","): break
-                while self.current.kind == "NEWLINE": self.advance()
+                while self.current.kind in {"NEWLINE", "DEDENT"}: self.advance()
             self.expect("}"); return DictExpr(items)
         raise UkrCodeError(f"неочікуваний токен {token.value!r}", token.line, token.column)

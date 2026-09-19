@@ -20,27 +20,28 @@ class Lexer:
     )
 
     def tokenize(self, source: str) -> list[Token]:
+        source = self._normalize_python_blocks(source)
         tokens: list[Token] = []
         indents = [0]
         group_depth = 0
-        at_line_start = True
+        pending_block_after_colon = False
         line = 1
-        column = 1
         for raw in source.splitlines(keepends=True):
             content = raw.rstrip("\r\n")
             if not content.strip() or content.lstrip().startswith("#"):
                 line += 1
                 continue
             indent = len(content) - len(content.lstrip(" "))
-            if group_depth == 0 and indent > indents[-1]:
+            if pending_block_after_colon and indent > indents[-1]:
                 indents.append(indent)
                 tokens.append(Token("INDENT", indent, line, 1))
-            while group_depth == 0 and indent < indents[-1]:
+            while (pending_block_after_colon or group_depth == 0) and indent < indents[-1]:
                 indents.pop()
                 tokens.append(Token("DEDENT", indent, line, 1))
             if group_depth == 0 and indent != indents[-1]:
                 raise UkrCodeError("неправильний відступ", line, 1)
             position = indent
+            line_ended_with_colon = False
             while position < len(content):
                 match = self._token.match(content, position)
                 if not match:
@@ -64,14 +65,25 @@ class Lexer:
                     kind = "NAME"
                 else:
                     kind = "OP"
+                    if value == ":":
+                        line_ended_with_colon = True
                     if value in "([{": group_depth += 1
                     elif value in ")]}": group_depth = max(0, group_depth - 1)
                 tokens.append(Token(kind, value, line, position - len(match.group())))
+            pending_block_after_colon = line_ended_with_colon
             tokens.append(Token("NEWLINE", "\n", line, len(content) + 1))
             line += 1
-            at_line_start = True
         while len(indents) > 1:
             indents.pop()
             tokens.append(Token("DEDENT", 0, line, 1))
         tokens.append(Token("EOF", "", line, 1))
         return tokens
+
+    @staticmethod
+    def _normalize_python_blocks(source: str) -> str:
+        pattern = re.compile(r"пайтон\(\s*(?P<quote>'''|\"\"\")(?P<code>.*?)(?P=quote)\s*\)", re.DOTALL)
+
+        def replace(match):
+            return "пайтон(" + repr(match.group("code")) + ")"
+
+        return pattern.sub(replace, source)

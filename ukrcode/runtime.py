@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.error
 import time
 import datetime
+import importlib.util
 import logging
 import os
 import random
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 
 from .errors import UkrCodeError
 from .lexer import Lexer
-from .parser import Attribute, Binary, Call, DictExpr, Index, ListExpr, Literal, Name, Statement, Unary, UserClass
+from .parser import Attribute, Binary, Call, DictExpr, Index, LambdaExpr, ListExpr, Literal, Name, Statement, Unary, UserClass
 from .parser import Parser
 
 
@@ -304,7 +305,7 @@ class Environment(dict):
 
     def resolve(self, name):
         if name in self: return self
-        if self.parent: return self.parent.resolve(name)
+        if self.parent is not None: return self.parent.resolve(name)
         raise UkrCodeError(f'невідома змінна "{name}"')
 
     def get_value(self, name): return self.resolve(name)[name]
@@ -328,6 +329,7 @@ def load_dotenv(path=None):
 def stdlib(interpreter):
     def write(*values): print(*values)
     def env(name): return os.environ.get(name, "")
+    def python(code): return interpreter.run_python(code)
     text = Module(**{
         "довжина": len,
         "верхній_регістр": lambda value: value.upper(),
@@ -345,7 +347,18 @@ def stdlib(interpreter):
         "відсортувати": lambda values: sorted(values),
         "містить": lambda values, value: value in values,
     })
-    math_module = Module(**{"округлити": round, "абс": abs, "мін": min, "макс": max, "корінь": math.sqrt, "пі": math.pi})
+    math_module = Module(**{
+        "округлити": round,
+        "абс": abs,
+        "мін": min,
+        "макс": max,
+        "додати": operator.add,
+        "відняти": operator.sub,
+        "помножити": operator.mul,
+        "поділити": operator.truediv,
+        "корінь": math.sqrt,
+        "пі": math.pi,
+    })
     json_module = Module(**{"розібрати": json.loads, "створити": lambda value: json.dumps(value, ensure_ascii=False)})
     files = Module(**{
         "прочитати": lambda path: open(path, encoding="utf-8").read(),
@@ -382,12 +395,37 @@ def stdlib(interpreter):
         request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request) as response:
             return Module(статус=response.status, текст=response.read().decode("utf-8"))
-    http = Module(**{"отримати": http_get, "пост": http_post})
+    class HttpServer:
+        def __init__(self, host="127.0.0.1", port=8000):
+            self.host = host
+            self.port = port
+            self.routes = {}
+            self._server = None
+
+        def маршрут(self, path, handler):
+            self.routes[path] = handler
+            return handler
+
+        def запуск(self):
+            self._server = {"host": self.host, "port": self.port, "routes": self.routes}
+            return self._server
+
+        def зупинити(self):
+            self._server = None
+            return True
+
+    http = Module(**{
+        "отримати": http_get,
+        "пост": http_post,
+        "сервер": lambda host="127.0.0.1", port=8000: HttpServer(host, port),
+    })
     telegram = Module(Бот=lambda token: TelegramBot(token, interpreter))
     discord = Module(Бот=DiscordBot)
     database = Module(**{"підключити": Database})
     builtins = {
-        "написати": write, "введення": input,
+        "написати": write, "вивести": write, "надрукувати": write,
+        "пайтон": python,
+        "введення": input,
         "діапазон": lambda *values: list(range(*values)),
         "довжина": len, "тип": lambda value: type(value).__name__,
         "текст": str, "ціле": int, "дробове": float,
@@ -430,6 +468,7 @@ class Interpreter:
 
     def execute_statement(self, statement, env):
         kind, data = statement.kind, statement.data
+        self._active_environment = env
         if kind == "assign": env[data[0]] = self.evaluate(data[1], env)
         elif kind == "setattr":
             target = self.evaluate(data[0].object, env)
@@ -497,13 +536,46 @@ class Interpreter:
             if isinstance(event, EventSpec): event.bot.register(event, data[1], env)
 
     def load_module(self, name):
-        candidates = [self.current_dir / f"{name}.ucod", self.current_dir / name / "main.ucod", self.current_dir / ".ucod" / "packages" / name / "main.ucod"]
+        parts = name.split(".")
+        relative = Path(*parts)
+        candidates = [
+            self.current_dir / f"{relative}.ucod",
+            self.current_dir / relative / "main.ucod",
+            self.current_dir / ".ucod" / "packages" / f"{relative}.ucod",
+            self.current_dir / ".ucod" / "packages" / relative / "main.ucod",
+        ]
         path = next((candidate for candidate in candidates if candidate.exists()), None)
+        package_root = next((candidate.parent for candidate in candidates[1:] if candidate.parent.exists()), None)
+        if path is None and package_root:
+            plugin = package_root / "plugin.py"
+            if plugin.exists():
+                return self.load_python_plugin(plugin, name)
         if path is None:
-            raise UkrCodeError(f'не знайдено бібліотеку "{name}"')
+            raise UkrCodeError(f'не знайдено бібліотеку або модуль "{name}"')
+        plugin = path.parent / "plugin.py"
+        values = {}
+        if plugin.exists():
+            values.update(self.load_python_plugin(plugin, name).__dict__)
         module_interpreter = Interpreter(path.parent)
-        values = module_interpreter.run(path.read_text(encoding="utf-8"), path)
+        values.update(module_interpreter.run(path.read_text(encoding="utf-8"), path))
         return Module(**{key: value for key, value in values.items() if not key.startswith("__")})
+
+    def load_python_plugin(self, path, name):
+        """Load an optional package adapter exposing host libraries to UkrCode."""
+        try:
+            spec = importlib.util.spec_from_file_location(f"ukrcode_plugin_{name}", path)
+            plugin = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(plugin)
+        except Exception as error:
+            raise UkrCodeError(f'не вдалося завантажити Python-плагін "{name}": {error}') from error
+        exported = getattr(plugin, "ucod_module", None)
+        if exported is None:
+            exported = getattr(plugin, "модуль", None)
+        if exported is None:
+            raise UkrCodeError(f'плагін "{name}" має повернути словник ucod_module')
+        if not isinstance(exported, dict):
+            raise UkrCodeError(f'ucod_module у плагіні "{name}" має бути словником')
+        return Module(**exported)
 
     def evaluate(self, expression, env):
         if isinstance(expression, Literal): return expression.value
@@ -517,7 +589,11 @@ class Interpreter:
                 method = self.find_method(instance.class_definition, expression.name)
                 if method: return BoundMethod(method, instance, self)
                 raise UkrCodeError(f'обʼєкт не має властивості "{expression.name}"')
-            return getattr(instance, expression.name)
+            try:
+                return getattr(instance, expression.name)
+            except AttributeError as error:
+                module_name = type(instance).__name__
+                raise UkrCodeError(f'у {module_name} немає властивості або функції "{expression.name}"') from error
         if isinstance(expression, Index):
             collection = self.evaluate(expression.object, env)
             start = self.evaluate(expression.start, env) if expression.start is not None else None
@@ -529,6 +605,8 @@ class Interpreter:
         if isinstance(expression, Unary):
             value = self.evaluate(expression.expression, env); return not value if expression.op == "не" else (-value if expression.op == "-" else value)
         if isinstance(expression, Binary): return self.apply_binary(self.evaluate(expression.left, env), expression.op, self.evaluate(expression.right, env))
+        if isinstance(expression, LambdaExpr):
+            return UserFunction("<lambda>", expression.params, expression.body, env)
         if isinstance(expression, Call):
             function = self.evaluate(expression.function, env); args = [self.evaluate(arg, env) for arg in expression.args]; kwargs = {k: self.evaluate(v, env) for k, v in expression.kwargs.items()}
             if isinstance(function, UserClass):
@@ -538,8 +616,27 @@ class Interpreter:
                 return instance
             if isinstance(function, UserFunction):
                 return self.call_user_function(function, args, kwargs, env)
-            return function(*args, **kwargs)
+            try:
+                return function(*args, **kwargs)
+            except TypeError as error:
+                raise UkrCodeError(f'неправильні аргументи функції: {error}') from error
         raise UkrCodeError("невідомий вираз")
+
+    def run_python(self, code):
+        """Execute an explicit Python escape hatch in the current UkrCode scope."""
+        environment = getattr(self, "_active_environment", self.global_env)
+        namespace = dict(environment)
+        namespace["ukrcode"] = environment
+        namespace["__builtins__"] = __builtins__
+        try:
+            exec(compile(code, "<пайтон у .ucod>", "exec"), namespace, namespace)
+        except Exception as error:
+            raise UkrCodeError(f"помилка Python-коду: {error}") from error
+        protected = {"__builtins__", "ukrcode"}
+        for name, value in namespace.items():
+            if not name.startswith("__") and name not in protected:
+                environment[name] = value
+        return None
 
     def find_method(self, class_definition, name):
         current = class_definition
@@ -564,3 +661,5 @@ class Interpreter:
         operations = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv, "//": operator.floordiv, "%": operator.mod, "**": operator.pow, "==": operator.eq, "!=": operator.ne, ">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le}
         try: return operations[op](left, right)
         except KeyError as error: raise UkrCodeError(f"невідомий оператор {op}") from error
+        except TypeError as error:
+            raise UkrCodeError(f"оператор {op!r} не можна застосувати до {type(left).__name__} і {type(right).__name__}; для тексту використайте текст(...)") from error

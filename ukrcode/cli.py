@@ -3,9 +3,28 @@ import pathlib
 import sys
 
 from . import __version__
+from .errors import UkrCodeError
 from .lexer import Lexer
 from .runtime import Interpreter
 from .packages import PackageManager
+
+
+def _print_error(error, path=None):
+    location = str(path) if path else "UkrCode"
+    if getattr(error, "line", None):
+        location += f":{error.line}"
+    if isinstance(error, FileNotFoundError):
+        message = "файл не знайдено"
+    elif isinstance(error, UnicodeError):
+        message = "файл має бути збережений у кодуванні UTF-8"
+    else:
+        message = getattr(error, "message", str(error))
+    print(f"Помилка у {location}: {message}", file=sys.stderr)
+    if isinstance(error, UkrCodeError) and "невідома змінна" in error.message:
+        print("Підказка: перевірте назву змінної або оголосіть її перед використанням.", file=sys.stderr)
+    elif isinstance(error, UkrCodeError) and "немає властивості" in error.message:
+        print("Підказка: перевірте назву функції модуля та доступні API у документації.", file=sys.stderr)
+    return 1
 
 
 def main(argv=None):
@@ -33,7 +52,14 @@ def main(argv=None):
         for package in manager.list(): print(package)
         return 0
     if args.command == "check":
-        source = pathlib.Path(args.file).read_text(encoding="utf-8"); Lexer().tokenize(source); print("Синтаксис правильний"); return 0
+        path = pathlib.Path(args.file)
+        try:
+            source = path.read_text(encoding="utf-8")
+            Lexer().tokenize(source)
+        except (OSError, UnicodeError, UkrCodeError) as error:
+            return _print_error(error, path)
+        print("Синтаксис правильний")
+        return 0
     if args.command == "format":
         path = pathlib.Path(args.file)
         path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
@@ -43,7 +69,13 @@ def main(argv=None):
         return subprocess.call([sys.executable, "-m", "pytest", "-q"])
     if args.command == "run":
         path = pathlib.Path(args.file)
-        Interpreter().run(path.read_text(encoding="utf-8"), path); return 0
+        try:
+            Interpreter().run(path.read_text(encoding="utf-8"), path)
+        except (OSError, UnicodeError, UkrCodeError) as error:
+            return _print_error(error, path)
+        except Exception as error:
+            return _print_error(UkrCodeError(f"неочікувана помилка: {error}"), path)
+        return 0
     print(f"UkrCode {__version__}\nВведіть 'вийти' для завершення.")
     interpreter = Interpreter()
     while True:
